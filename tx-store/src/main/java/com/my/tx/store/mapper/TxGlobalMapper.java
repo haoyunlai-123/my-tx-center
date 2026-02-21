@@ -32,4 +32,6 @@ public interface TxGlobalMapper {
     List<TxGlobalDO> scanRunnable(@Param("statuses") List<String> statuses,
                                   @Param("now") LocalDateTime now,
                                   @Param("limit") int limit);
+
+    int updateCurrentStep(@Param("txId") String txId, @Param("currentStep") int currentStep);
 }

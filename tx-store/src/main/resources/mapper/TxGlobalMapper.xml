@@ -63,4 +63,10 @@
         LIMIT #{limit}
     </select>
 
+    <update id="updateCurrentStep">
+        UPDATE tx_global
+        SET current_step = #{currentStep}
+        WHERE tx_id = #{txId}
+    </update>
+
 </mapper>
