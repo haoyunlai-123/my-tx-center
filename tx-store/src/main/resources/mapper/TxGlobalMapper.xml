@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.my.tx.store.mapper.TxGlobalMapper">
+
+    <resultMap id="TxGlobalMap" type="com.my.tx.store.model.TxGlobalDO">
+        <id column="id" property="id"/>
+        <result column="tx_id" property="txId"/>
+        <result column="biz_type" property="bizType"/>
+        <result column="biz_key" property="bizKey"/>
+        <result column="status" property="status"/>
+        <result column="current_step" property="currentStep"/>
+        <result column="error_code" property="errorCode"/>
+        <result column="error_msg" property="errorMsg"/>
+        <result column="next_run_at" property="nextRunAt"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+        <result column="version" property="version"/>
+    </resultMap>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO tx_global
+        (tx_id, biz_type, biz_key, status, current_step, error_code, error_msg, next_run_at, version)
+        VALUES
+        (#{txId}, #{bizType}, #{bizKey}, #{status}, #{currentStep}, #{errorCode}, #{errorMsg}, #{nextRunAt}, #{version})
+    </insert>
+
+    <select id="selectByTxId" resultMap="TxGlobalMap">
+        SELECT * FROM tx_global WHERE tx_id = #{txId}
+    </select>
+
+    <update id="updateStatusAndError">
+        UPDATE tx_global
+        SET status = #{status},
+        error_code = #{errorCode},
+        error_msg = #{errorMsg}
+        WHERE tx_id = #{txId}
+    </update>
+
+    <update id="updateNextRunAt">
+        UPDATE tx_global
+        SET next_run_at = #{nextRunAt}
+        WHERE tx_id = #{txId}
+    </update>
+
+    <update id="tryLock">
+        UPDATE tx_global
+        SET version = version + 1
+        WHERE tx_id = #{txId}
+        AND version = #{version}
+    </update>
+
+    <select id="scanRunnable" resultMap="TxGlobalMap">
+        SELECT *
+        FROM tx_global
+        WHERE status IN
+        <foreach collection="statuses" item="s" open="(" close=")" separator=",">
+            #{s}
+        </foreach>
+        AND next_run_at &lt;= #{now}
+        ORDER BY next_run_at ASC, id ASC
+        LIMIT #{limit}
+    </select>
+
+</mapper>
