@@ -9,4 +9,12 @@
         VALUES (#{txId}, #{stepIndex}, #{phase}, #{success}, #{costMs}, #{message})
     </insert>
 
+    <select id="selectByTxId" resultType="com.my.tx.store.model.TxLogDO">
+        SELECT id, tx_id AS txId, step_index AS stepIndex, phase, success, cost_ms AS costMs, message, created_at AS createdAt
+        FROM tx_log
+        WHERE tx_id = #{txId}
+        ORDER BY id DESC
+        LIMIT #{limit}
+    </select>
+
 </mapper>
