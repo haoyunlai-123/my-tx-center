@@ -1,5 +1,6 @@
 package com.my.tx;
 
+import com.my.tx.common.DbIdempotencyService;
 import com.my.tx.common.TxHeaders;
 import com.my.tx.common.TxIdempotency;
 import jakarta.servlet.http.HttpServletRequest;
@@ -15,14 +16,20 @@ public class AccountController {
     // user -> balance
     private static final Map<String, Integer> BAL = new ConcurrentHashMap<>();
 
+    private final DbIdempotencyService idem;
+
     static {
         BAL.put("u1", 1000);
     }
 
+    public AccountController(DbIdempotencyService idem) {
+        this.idem = idem;
+    }
+
     @PostMapping("/deduct")
     public Map<String, Object> deduct(@RequestBody Map<String, Object> body, HttpServletRequest req) {
-        String idemKey = TxHeaders.key(req);
-        if (!TxIdempotency.firstTime(idemKey)) {
+        String idemKey = TxHeaders.key(req, "account:deduct");
+        if (!idem.firstTime(idemKey)) {
             return Map.of("ok", true, "idempotent", true);
         }
 
@@ -44,8 +51,8 @@ public class AccountController {
 
     @PostMapping("/refund")
     public Map<String, Object> refund(@RequestBody Map<String, Object> body, HttpServletRequest req) {
-        String idemKey = TxHeaders.key(req);
-        if (!TxIdempotency.firstTime(idemKey)) {
+        String idemKey = TxHeaders.key(req, "account:refund");
+        if (!idem.firstTime(idemKey)) {
             return Map.of("ok", true, "idempotent", true);
         }
 

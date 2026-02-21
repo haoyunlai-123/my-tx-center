@@ -1,7 +1,7 @@
 package com.my.tx;
 
+import com.my.tx.common.DbIdempotencyService;
 import com.my.tx.common.TxHeaders;
-import com.my.tx.common.TxIdempotency;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.*;
 
@@ -12,13 +12,18 @@ import java.util.concurrent.ConcurrentHashMap;
 @RequestMapping("/order")
 public class OrderController {
 
-    // 用内存模拟“订单表”：orderId -> status
     private static final Map<String, String> ORDER = new ConcurrentHashMap<>();
+
+    private final DbIdempotencyService idem;
+
+    public OrderController(DbIdempotencyService idem) {
+        this.idem = idem;
+    }
 
     @PostMapping("/create")
     public Map<String, Object> create(@RequestBody Map<String, Object> body, HttpServletRequest req) {
-        String idemKey = TxHeaders.key(req);
-        if (!TxIdempotency.firstTime(idemKey)) {
+        String idemKey = TxHeaders.key(req, "order:create");
+        if (!idem.firstTime(idemKey)) {
             return Map.of("ok", true, "idempotent", true);
         }
 
@@ -29,8 +34,8 @@ public class OrderController {
 
     @PostMapping("/cancel")
     public Map<String, Object> cancel(@RequestBody Map<String, Object> body, HttpServletRequest req) {
-        String idemKey = TxHeaders.key(req);
-        if (!TxIdempotency.firstTime(idemKey)) {
+        String idemKey = TxHeaders.key(req, "order:cancel");
+        if (!idem.firstTime(idemKey)) {
             return Map.of("ok", true, "idempotent", true);
         }
 
