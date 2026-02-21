@@ -3,21 +3,23 @@ package com.my.tx.server.engine.executor;
 import com.my.tx.common.enums.TxPhase;
 import com.my.tx.store.mapper.TxLogMapper;
 import com.my.tx.store.model.TxLogDO;
-import org.springframework.http.*;
+import okhttp3.*;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestTemplate;
 
-/**
- * 执行事务步骤
- */
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+
 @Component
 public class HttpStepExecutor {
 
-    private final RestTemplate restTemplate;
+    private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
+
+    private final OkHttpClient baseClient;
     private final TxLogMapper txLogMapper;
 
-    public HttpStepExecutor(TxLogMapper txLogMapper) {
-        this.restTemplate = new RestTemplate();
+    public HttpStepExecutor(OkHttpClient okHttpClient, TxLogMapper txLogMapper) {
+        this.baseClient = okHttpClient;
         this.txLogMapper = txLogMapper;
     }
 
@@ -25,38 +27,49 @@ public class HttpStepExecutor {
                               String method, String url, String body, int timeoutMs) {
         long start = System.currentTimeMillis();
 
-        try {
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            // 幂等键：业务服务可用它做去重（后面我们在 examples 里实现）
-            headers.add("X-TX-ID", txId);
-            headers.add("X-STEP-INDEX", String.valueOf(stepIndex));
-            headers.add("X-PHASE", phase.name());
+        OkHttpClient client = baseClient.newBuilder()
+                .callTimeout(Duration.ofMillis(Math.max(1, timeoutMs)))
+                .build();
 
-            HttpEntity<String> entity = new HttpEntity<>(body, headers);
+        RequestBody rb = RequestBody.create(body == null ? "" : body, JSON);
 
-            // 先简单用 RestTemplate，timeout 先不折腾（后面再升级为 HttpClient + timeouts）
-            ResponseEntity<String> resp = restTemplate.exchange(
-                    url,
-                    HttpMethod.valueOf(method.toUpperCase()),
-                    entity,
-                    String.class
-            );
+        Request req = new Request.Builder()
+                .url(url)
+                .method(method == null ? "POST" : method.toUpperCase(), rb)
+                .header("Content-Type", "application/json")
+                .header("X-TX-ID", txId)
+                .header("X-STEP-INDEX", String.valueOf(stepIndex))
+                .header("X-PHASE", phase.name())
+                .build();
 
+        try (Response resp = client.newCall(req).execute()) {
             int cost = (int) (System.currentTimeMillis() - start);
-            boolean ok = resp.getStatusCode().is2xxSuccessful();
+            int code = resp.code();
+
+            String respBody = resp.body() == null ? "" : resp.body().string();
+            boolean ok = code >= 200 && code < 300;
 
             writeLog(txId, stepIndex, phase, ok, cost,
-                    ok ? "OK" : ("HTTP " + resp.getStatusCode().value()));
+                    ok ? ("OK " + code) : ("HTTP_" + code + " " + shrink(respBody)));
 
-            if (!ok) {
-                return ExecResult.fail("HTTP_STATUS_" + resp.getStatusCode().value());
-            }
-            return ExecResult.ok();
+            if (ok) return ExecResult.ok();
+
+            // 错误分类：4xx 通常不可重试；5xx 可重试
+            boolean retryable = (code >= 500 && code <= 599);
+            return ExecResult.fail("HTTP_" + code, retryable);
+
+        } catch (IOException e) {
+            int cost = (int) (System.currentTimeMillis() - start);
+            // 网络/超时：可重试
+            writeLog(txId, stepIndex, phase, false, cost,
+                    "IO: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            return ExecResult.fail("IO_" + e.getClass().getSimpleName(), true);
         } catch (Exception e) {
             int cost = (int) (System.currentTimeMillis() - start);
-            writeLog(txId, stepIndex, phase, false, cost, e.getClass().getSimpleName() + ": " + e.getMessage());
-            return ExecResult.fail(e.getClass().getSimpleName() + ": " + e.getMessage());
+            // 其他异常：默认不可重试（也可按需改）
+            writeLog(txId, stepIndex, phase, false, cost,
+                    "EX: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            return ExecResult.fail("EX_" + e.getClass().getSimpleName(), false);
         }
     }
 
@@ -71,19 +84,29 @@ public class HttpStepExecutor {
         txLogMapper.insert(log);
     }
 
+    private static String shrink(String s) {
+        if (s == null) return "";
+        byte[] b = s.getBytes(StandardCharsets.UTF_8);
+        if (b.length <= 200) return s;
+        return new String(b, 0, 200, StandardCharsets.UTF_8) + "...";
+    }
+
     public static class ExecResult {
         private final boolean success;
         private final String error;
+        private final boolean retryable;
 
-        private ExecResult(boolean success, String error) {
+        private ExecResult(boolean success, String error, boolean retryable) {
             this.success = success;
             this.error = error;
+            this.retryable = retryable;
         }
 
-        public static ExecResult ok() { return new ExecResult(true, null); }
-        public static ExecResult fail(String err) { return new ExecResult(false, err); }
+        public static ExecResult ok() { return new ExecResult(true, null, false); }
+        public static ExecResult fail(String err, boolean retryable) { return new ExecResult(false, err, retryable); }
 
         public boolean isSuccess() { return success; }
         public String getError() { return error; }
+        public boolean isRetryable() { return retryable; }
     }
 }
